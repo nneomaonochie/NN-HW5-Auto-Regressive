@@ -221,4 +221,4 @@ class PatchAutoEncoder(torch.nn.Module, PatchAutoEncoderBase):
 
     def decode(self, x: torch.Tensor) -> torch.Tensor:
         #Claude Sonnet 4.5
-        return self.decoder(z)
+        return self.decoder(x)
