@@ -158,15 +158,15 @@ class AutoregressiveModel(torch.nn.Module, Autoregressive):
             # Get logits for next token (last position)
             logits = self.output_proj(x_transformed[:, -1, :])  # (B, n_tokens)
             
-            # Sample next token (greedy: take argmax)
-            next_token = logits.argmax(dim=-1)  # (B,)
-            
-            # Or sample from distribution (more diverse):
-            # probs = torch.softmax(logits / temperature, dim=-1)
-            # next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            # CORRECT (stochastic - creates diverse samples):
+            temperature = 1.0
+            probs = torch.softmax(logits / temperature, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
             
             # Store generated token
             generated[:, i] = next_token
+
+            
         
         # Reshape to image format: (B, seq_len) -> (B, h, w)
         generated = generated.view(B, h, w)
