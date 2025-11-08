@@ -2,6 +2,7 @@ import abc
 
 import torch
 
+import torch.nn as nn
 
 def load() -> torch.nn.Module:
     from pathlib import Path
@@ -194,7 +195,7 @@ class PatchAutoEncoder(torch.nn.Module, PatchAutoEncoderBase):
         
         # Create encoder and decoder
         self.encoder = self.PatchEncoder(patch_size, latent_dim, bottleneck)
-        self.decoder = self.PatchDecoder(patch_size, latent_dim, bottleneck
+        self.decoder = self.PatchDecoder(patch_size, latent_dim, bottleneck)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
