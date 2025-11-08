@@ -1,3 +1,4 @@
+import struct
 from pathlib import Path
 from typing import cast
 
@@ -21,14 +22,52 @@ class Compressor:
 
         Use arithmetic coding.
         """
-        raise NotImplementedError()
+                # Add batch dimension if needed
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        
+        with torch.no_grad():
+            # Tokenize: (1, H, W, 3) → (1, h, w)
+            tokens = self.tokenizer.encode_index(x)  # (1, 30, 20) for 150x100 image
+            
+            # Flatten tokens: (1, 30, 20) → (600,)
+            tokens_flat = tokens.flatten().cpu().numpy().astype(np.uint16)
+            
+            h, w = tokens.shape[1], tokens.shape[2]
+            
+            # Pack metadata (image dimensions) - 4 bytes
+            metadata = struct.pack('HH', h, w)
+            
+            # Pack tokens efficiently
+            # With codebook_bits=10, we have tokens in range [0, 1023]
+            # Store as uint16 (2 bytes per token)
+            token_bytes = tokens_flat.tobytes()
+            
+            return metadata + token_bytes
 
     def decompress(self, x: bytes) -> torch.Tensor:
         """
         Decompress a tensor into a PIL image.
         You may assume the output image is 150 x 100 pixels.
         """
-        raise NotImplementedError()
+        # Extract metadata (4 bytes)
+        h, w = struct.unpack('HH', x[:4])
+        token_bytes = x[4:]
+        
+        # Unpack tokens
+        seq_len = h * w
+        tokens_flat = np.frombuffer(token_bytes, dtype=np.uint16, count=seq_len)
+        
+        # Reshape to image format: (seq_len,) → (1, h, w)
+        tokens = torch.from_numpy(tokens_flat).long().to(self.device)
+        tokens = tokens.view(1, h, w)
+        
+        with torch.no_grad():
+            # Decode tokens to image: (1, h, w) → (1, H, W, 3)
+            image = self.tokenizer.decode_index(tokens)
+        
+        # Remove batch dimension: (1, H, W, 3) → (H, W, 3)
+        return image.squeeze(0)
 
 
 def compress(tokenizer: Path, autoregressive: Path, image: Path, compressed_image: Path):
