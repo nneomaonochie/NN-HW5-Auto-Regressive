@@ -1,6 +1,7 @@
 import abc
 
 import torch
+import torch.nn as nn
 
 
 def load() -> torch.nn.Module:
@@ -53,12 +54,120 @@ class AutoregressiveModel(torch.nn.Module):
     Hint: You can complete this homework without using positional embeddings
     """
 
-    def __init__(self, d_latent: int = 128, n_tokens: int = 2**10):
+    def __init__(self, d_latent: int = 128, n_tokens: int = 2**10, num_layers: int = 4, nhead: int = 8, dim_feedforward: int = 512):
         super().__init__()
-        raise NotImplementedError()
+        
+        # Claude Sonnet 4.5
+        self.d_latent = d_latent
+        self.n_tokens = n_tokens
+        
+        # 1. Token embedding: maps integer tokens to d_latent dimensions
+        self.token_embedding = nn.Embedding(n_tokens, d_latent)
+        
+        # 2. Optional: Positional embedding (can help but not required)
+        # For images up to 30x20 = 600 tokens
+        self.pos_embedding = nn.Parameter(torch.randn(1, 1000, d_latent) * 0.02)
+        
+        # 3. Start token embedding (for the first prediction)
+        self.start_token = nn.Parameter(torch.randn(1, 1, d_latent))
+        
+        # 4. Transformer encoder layers (used as decoder with causal mask)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_latent,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            batch_first=True,
+            dropout=0.0,
+            activation='gelu'
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # 5. Output projection: d_latent -> n_tokens (logits for each token)
+        self.output_proj = nn.Linear(d_latent, n_tokens)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        raise NotImplementedError()
+        # Claude Sonnet 4.5
+        B, h, w = x.shape
+        seq_len = h * w
+        
+        # 1. Flatten tokens: (B, h, w) -> (B, seq_len)
+        x_flat = x.view(B, seq_len)
+        
+        # 2. Embed tokens: (B, seq_len) -> (B, seq_len, d_latent)
+        x_embed = self.token_embedding(x_flat)
+        
+        # 3. Add positional embeddings
+        x_embed = x_embed + self.pos_embedding[:, :seq_len, :]
+        
+        # 4. Shift right by 1: prepend start token, remove last token
+        # This ensures position i predicts token i (doesn't see it as input)
+        start_tokens = self.start_token.expand(B, -1, -1)  # (B, 1, d_latent)
+        x_shifted = torch.cat([start_tokens, x_embed[:, :-1, :]], dim=1)  # (B, seq_len, d_latent)
+        
+        # 5. Create causal mask (upper triangular)
+        # Mask shape: (seq_len, seq_len)
+        # True means "cannot attend", False means "can attend"
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len, device=x.device)
+        
+        # 6. Apply transformer with causal mask
+        x_transformed = self.transformer(x_shifted, mask=causal_mask, is_causal=True)
+        
+        # 7. Project to logits: (B, seq_len, d_latent) -> (B, seq_len, n_tokens)
+        logits_flat = self.output_proj(x_transformed)
+        
+        # 8. Reshape back to image format: (B, seq_len, n_tokens) -> (B, h, w, n_tokens)
+        logits = logits_flat.view(B, h, w, self.n_tokens)
+        
+        return logits, {}
 
     def generate(self, B: int = 1, h: int = 30, w: int = 20, device=None) -> torch.Tensor:  # noqa
-        raise NotImplementedError()
+        # Claude Sonnet 4.5
+        if device is None:
+            device = next(self.parameters()).device
+        
+        seq_len = h * w
+        
+        # Start with empty sequence
+        generated = torch.zeros(B, seq_len, dtype=torch.long, device=device)
+        
+        # Generate tokens one by one
+        for i in range(seq_len):
+            # Get embeddings for generated tokens so far
+            if i == 0:
+                # First token: just use start token
+                x_embed = self.start_token.expand(B, 1, -1)
+            else:
+                # Embed generated tokens
+                x_embed = self.token_embedding(generated[:, :i])
+                # Add positional embeddings
+                x_embed = x_embed + self.pos_embedding[:, :i, :]
+                # Prepend start token
+                start_tokens = self.start_token.expand(B, -1, -1)
+                x_embed = torch.cat([start_tokens, x_embed], dim=1)
+            
+            # Create causal mask for current sequence length
+            current_len = i + 1
+            causal_mask = nn.Transformer.generate_square_subsequent_mask(
+                current_len, device=device
+            )
+            
+            # Forward pass through transformer
+            x_transformed = self.transformer(x_embed, mask=causal_mask, is_causal=True)
+            
+            # Get logits for next token (last position)
+            logits = self.output_proj(x_transformed[:, -1, :])  # (B, n_tokens)
+            
+            # Sample next token (greedy: take argmax)
+            next_token = logits.argmax(dim=-1)  # (B,)
+            
+            # Or sample from distribution (more diverse):
+            # probs = torch.softmax(logits / temperature, dim=-1)
+            # next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            
+            # Store generated token
+            generated[:, i] = next_token
+        
+        # Reshape to image format: (B, seq_len) -> (B, h, w)
+        generated = generated.view(B, h, w)
+        
+        return generated
