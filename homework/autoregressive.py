@@ -42,7 +42,7 @@ class Autoregressive(abc.ABC):
         """
 
 
-class AutoregressiveModel(torch.nn.Module):
+class AutoregressiveModel(torch.nn.Module, Autoregressive):
     """
     Implement an auto-regressive model.
     The input is a set of patch tokens (integers), the output is an image of probability.
@@ -86,6 +86,7 @@ class AutoregressiveModel(torch.nn.Module):
         self.output_proj = nn.Linear(d_latent, n_tokens)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        #print("Input shape:", x.shape) # used for debugging
         # Claude Sonnet 4.5
         B, h, w = x.shape
         seq_len = h * w
